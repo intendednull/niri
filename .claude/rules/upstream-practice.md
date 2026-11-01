@@ -25,8 +25,9 @@ too"):
 > You may use LLMs for *translating* your human-written text; in this case you must also provide
 > the original text to reduce the chance of miscommunication.
 
-The PR template and the issue templates each end with the checkbox "I did not use an LLM to write
-this ..." (added 2026-09-20, 7256ccf6).
+The templates carry the same rule as a checkbox, "I did not use an LLM to write this ...". The PR
+template and the bug report got it on 2026-09-20 (7256ccf6). The blank-issue template `other.md`,
+with its own checkbox, came on 2026-10-01 (ed22699d), along with `blank_issues_enabled: false`.
 
 For agents in this fork:
 - Contributing upstream is **off by default** (operator standing rule). Agents draft and file
@@ -40,10 +41,15 @@ For agents in this fork:
 ## Code style
 
 - **rustfmt, nightly** (tooling). `rustfmt.toml` sets `imports_granularity = "Module"`,
-  `group_imports = "StdExternalCrate"`, `wrap_comments = true` and `comment_width = 100`. The first
-  three are nightly-only. CI runs `cargo fmt --all -- --check` on `dtolnay/rust-toolchain@nightly`.
-  CONTRIBUTING and the PR template say `cargo +nightly fmt --all`. Here, run it in upstream's dev
-  shell (`nix develop`), whose toolchain is nightly.
+  `group_imports = "StdExternalCrate"`, `wrap_comments = true` and `comment_width = 100`, and all
+  four are nightly-only options. CI runs `cargo fmt --all -- --check` on
+  `dtolnay/rust-toolchain@nightly`. CONTRIBUTING says `cargo +nightly fmt --all`, and the PR
+  template `cargo +nightly fmt`.
+- **Upstream's dev shell differs by base.** On `main` (since 165a6d1e, "nix: remove `rust-overlay`
+  input", 2026-06-17), `nix develop` gives nixpkgs' stable rustc, cargo and clippy, with nightly
+  mode from `rustfmt.override { asNightly = true; }`. The `v26.04` shell this fork's base carries
+  is older: a rust-overlay nightly frozen by its `flake.lock` (1.92.0-nightly, 2025-09-15). Both
+  run `cargo fmt --all` with the nightly options; `.fork/gate` checks with its own pinned nightly.
 - **clippy** (tooling). CI runs `cargo clippy --all --all-targets` on stable. `clippy.toml` sets
   `ignore-interior-mutability` for `smithay::desktop::Window`, `smithay::output::Output` and
   `wayland_server::backend::ClientId`. `Cargo.toml` allows `new_without_default` and
@@ -153,11 +159,14 @@ what upstream expects of the operator's own hand-written submission:
 
 `.fork/gate` mirrors `ci.yml` step by step on this host. Its header records which environment each
 step uses and why. In short:
-- rustfmt, clippy, the visual-tests build and the Fedora `cargo build --all` run in upstream's dev
-  shell, which has the nightly rustfmt and libadwaita;
-- msrv runs in that shell with the MSRV toolchain from its rust-overlay input;
 - tests, randomized tests and the feature-combination builds run in nixpkgs' niri build
-  environment, the only one here where EGL works;
+  environment with its own rustc, where EGL works here;
+- clippy, the visual-tests build and the Fedora `cargo build --all` run in the tree's own dev
+  shell (for libadwaita) with a pinned stable toolchain, rustfmt with a pinned nightly, and msrv
+  with the version the tree's `ci.yml` names. The gate pins rust-overlay itself, so none of this
+  depends on the base's flake inputs;
+- every step runs without the live session's display, compositor IPC and session-bus variables,
+  with a private `XDG_RUNTIME_DIR` and `INSTA_UPDATE=no`;
 - `nix flake check` is advisory, as in CI.
 
 The `freebsd` job, the Alpine part of `build-musl`, and the deploy-only docs jobs aren't mirrored.
@@ -165,7 +174,7 @@ Run the gate before anything lands on `nixos` and on every pin.
 
 ## Where the fork deviates and why
 
-- **The `local` docs commit** (FORK.md, CLAUDE.md, this file, `.fork/gate`) is fork-only and
+- **The `local` docs commits** (FORK.md, CLAUDE.md, this file, `.fork/gate`) are fork-only and
   agent-written. Fork commits carry `Upstream:`, `Upstream-Status:` and `Drop-When:` trailers and a
   `Co-Authored-By: Claude` line, which upstream doesn't use. The tools read the trailers, and the
   attribution marks the commit as never submittable.
@@ -177,7 +186,14 @@ Run the gate before anything lands on `nixos` and on every pin.
   unmerged under the LLM policy, so upstream won't take this code or these tests as they are. They
   stay unedited so the carried code matches the PR, and the tests are the fork's regression check
   for #3295.
-- **The gate isn't CI's exact environment.** Tests run on nixpkgs' stable rustc rather than
-  `dtolnay/rust-toolchain@stable`. clippy runs on upstream's dev-shell nightly, not stable, because
-  that shell is the one with libadwaita for `niri-visual-tests`. `build-musl`'s command runs against
-  glibc. The `freebsd` job is not run.
+- **The gate isn't CI's exact environment.** CI takes the newest `@stable` and `@nightly` on every
+  run; the gate's toolchains are fixed until someone bumps them:
+  - tests, randomized tests, the feature-combination builds and `build-musl`: rustc 1.95.0, from
+    the nixpkgs ~/nixos locks. It is the toolchain the deployed fork is built with, and this
+    environment is where the EGL tests run here;
+  - clippy, the visual-tests build and the Fedora build: rustc 1.99.1, pinned stable;
+  - rustfmt: `nightly-2026-10-31` (rustc 1.101.0-nightly, built 2026-10-29), pinned;
+  - msrv: 1.85.0, from `v26.04`'s `ci.yml`.
+
+  Fedora's job uses Fedora's own cargo, and the gate uses the pinned stable instead.
+  `build-musl`'s command runs against glibc, and the `freebsd` job is not run.

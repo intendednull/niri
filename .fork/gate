@@ -5,25 +5,31 @@
 # step that can run here is one gate step running the same command. The v26.04 ci.yml has the same
 # steps; only the msrv toolchain differs, and the gate reads that from the tree's own ci.yml.
 #
-# No single dev environment runs every step on this host, so each step names one:
+# Each step names an environment, which is a dev shell for the system libraries plus a toolchain:
 #
-# - `upstream`: the tree's own flake dev shell (`nix develop <tree>`), with upstream's nightly
-#   toolchain. rustfmt.toml needs a nightly rustfmt, and the shell has libadwaita for
-#   niri-visual-tests. Its EGL tests fail here, though: the shell's older nixpkgs glibc/libglvnd
-#   can't load the host's Mesa from /run/opengl-driver ("Unable to obtain a valid EGL Display").
-#   So it runs rustfmt, clippy, the visual-tests build and the Fedora `cargo build --all`.
-# - `msrv`: the `upstream` shell with the MSRV toolchain from the same flake's rust-overlay input
-#   first on PATH.
-# - `nixpkgs`: the build environment of nixpkgs' own niri package, from the nixpkgs that ~/nixos
-#   locks (`nix develop --inputs-from ~/nixos nixpkgs#niri`, stable rustc). The deployed fork is
-#   built with this recipe, and EGL works here with no extra setup. It runs the tests, the
-#   randomized tests and the feature-combination builds. It has no libadwaita, so it can't build
-#   niri-visual-tests. Set FORK_GATE_NIXPKGS_FROM to take nixpkgs from another flake.
+# - `nixpkgs`: the build environment of nixpkgs' own niri package, with its own rustc, from the
+#   nixpkgs that ~/nixos locks (`nix develop --inputs-from ~/nixos nixpkgs#niri`). The deployed fork
+#   is built with this recipe and toolchain, and it is the environment where the `egl_*` tests get
+#   an EGL display. (In v26.04's own dev shell they fail with "Unable to obtain a valid EGL
+#   Display".) It runs the tests, the randomized tests and the feature-combination builds. It has no
+#   libadwaita, so it can't build niri-visual-tests. FORK_GATE_NIXPKGS_FROM picks another flake.
+# - `stable`, `nightly`, `msrv`: the tree's own flake dev shell (`nix develop <tree>`), which has
+#   libadwaita, with a toolchain the gate pins first on PATH. The shell's own toolchain depends on
+#   the base: v26.04's is a rust-overlay nightly frozen by its flake.lock, and main's (since
+#   165a6d1e) is nixpkgs' stable rustc with a nightly-mode rustfmt. Pinning keeps these steps on
+#   CI's toolchains whatever the base. `stable` (CI's `dtolnay/rust-toolchain@stable`) runs clippy,
+#   the visual-tests build and the Fedora `cargo build --all`. `nightly` runs rustfmt, since every
+#   rustfmt.toml option is nightly-only. `msrv` runs the msrv check on the version the tree's ci.yml
+#   names. The toolchains come from rust-overlay at the revision below, built against the tree's
+#   own nixpkgs so that they use the dev shell's glibc. That needs the tree's flake to have a
+#   `nixpkgs` input, but nothing else from it.
 # - `host`: no dev shell, for `nix flake check`.
 #
-# Each environment has its own CARGO_TARGET_DIR under the git-ignored target/: target/ (upstream),
-# target/msrv and target/nixpkgs. Every step gets a private XDG_RUNTIME_DIR, so the compositor the
-# tests start never shares a runtime directory with the live session.
+# Every step runs without the live session's DISPLAY, WAYLAND_DISPLAY, WAYLAND_SOCKET, NIRI_SOCKET
+# and DBUS_SESSION_BUS_ADDRESS, and with a private XDG_RUNTIME_DIR, so what the tests start can't
+# reach the running desktop's display, compositor IPC or session bus. INSTA_UPDATE=no stops insta
+# from writing .snap.new files into the tree. Each toolchain has its own CARGO_TARGET_DIR under the
+# git-ignored target/.
 #
 # Not mirrored: the `freebsd` job (needs a FreeBSD VM), the Alpine container of `build-musl` (its
 # cargo command runs on glibc here), the deploy-only `build-docs`/`publish-*` jobs and release.yml.
@@ -40,6 +46,12 @@ root=$(git rev-parse --show-toplevel)
 cd "$root"
 nixpkgs_from=${FORK_GATE_NIXPKGS_FROM:-$HOME/nixos}
 log_dir=$root/target/gate
+
+# Pinned toolchains: rust-overlay as of 2026-10-31. Bump the revision and both names together when
+# CI's stable or nightly has moved on, or when the tree's msrv needs a version this one lacks.
+rust_overlay=github:oxalica/rust-overlay/6ecf534a7c16e7c969f26838fdd8c93597ae93f3
+stable_toolchain=rust_1_99_1
+nightly_toolchain=rust-nightly_2026-10-31
 
 # The randomized-tests job's environment.
 slow_env="env RUST_BACKTRACE=1 RUN_SLOW_TESTS=1 PROPTEST_CASES=200000"
@@ -60,11 +72,11 @@ steps=(
   "build-musl:build|nixpkgs|target/nixpkgs|cargo build --no-default-features --features dbus,xdp-gnome-screencast"
   "randomized-tests:build-tests|nixpkgs|target/nixpkgs|$slow_env cargo test --no-run --all --exclude niri-visual-tests --release"
   "randomized-tests:test|nixpkgs|target/nixpkgs|$slow_env cargo test --all --exclude niri-visual-tests --release"
-  "visual-tests:build|upstream|target|cargo build --package niri-visual-tests"
+  "visual-tests:build|stable|target/stable|cargo build --package niri-visual-tests"
   "msrv:check|msrv|target/msrv|cargo check --all-targets"
-  "clippy:clippy|upstream|target|cargo clippy --all --all-targets"
-  "rustfmt:rustfmt|upstream|target|cargo fmt --all -- --check"
-  "fedora:build|upstream|target|cargo build --all"
+  "clippy:clippy|stable|target/stable|cargo clippy --all --all-targets"
+  "rustfmt:rustfmt|nightly|target/nightly|cargo fmt --all -- --check"
+  "fedora:build|stable|target/stable|cargo build --all"
   "freebsd:build|skip|-|needs a FreeBSD VM"
   "nix:flake-check|host|-|nix flake check"
 )
@@ -111,45 +123,60 @@ msrv_version() {
     sub(/.*@/, ""); print; exit }' .github/workflows/ci.yml
 }
 
-msrv_toolchain=
-resolve_msrv_toolchain() {
-  local version
-  version=$(msrv_version)
-  [[ -n $version ]] || { echo "gate: no msrv toolchain in ci.yml" >&2; return 1; }
-  echo "msrv toolchain: rust $version (rust-overlay#rust_${version//./_})"
-  msrv_toolchain=$(nix build --no-link --print-out-paths --inputs-from "$root" \
-    "rust-overlay#rust_${version//./_}")
+# Prints the store path of a pinned toolchain (stable, nightly or msrv).
+resolve_toolchain() {
+  local attr version
+  case $1 in
+    stable) attr=$stable_toolchain ;;
+    nightly) attr=$nightly_toolchain ;;
+    msrv)
+      version=$(msrv_version)
+      [[ -n $version ]] || { echo "gate: no msrv toolchain in ci.yml" >&2; return 1; }
+      attr=rust_${version//./_}
+      ;;
+  esac
+  echo "toolchain pin: $rust_overlay#$attr (nixpkgs from the tree's flake.lock)" >&2
+  nix build --no-link --print-out-paths "$rust_overlay#$attr" \
+    --inputs-from "$root" --override-input nixpkgs nixpkgs
 }
 
 run_dir=$(mktemp -d -t niri-gate-run.XXXXXX)
 trap 'rm -rf "$run_dir"' EXIT
 
-# Runs a command in one of the environments, with the step's target dir. Logs the toolchain first.
+# The live session's variables are dropped for every step, inside and outside the dev shell.
+isolate=(env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET -u NIRI_SOCKET
+  -u DBUS_SESSION_BUS_ADDRESS XDG_RUNTIME_DIR="$run_dir" INSTA_UPDATE=no)
+
+# Runs inside the environment: puts the pinned toolchain first on PATH, logs the toolchain and the
+# session variables the step sees, then runs the step.
+# shellcheck disable=SC2016 # expanded by the inner shell
+inner='
+  toolchain=$1 log_toolchain=$2
+  shift 2
+  [[ -n $toolchain ]] && export PATH="$toolchain/bin:$PATH"
+  [[ $log_toolchain == yes ]] && echo "toolchain: $(rustc --version); $(cargo --version)"
+  echo "session env: $(env | grep -E "^(DISPLAY|WAYLAND_(DISPLAY|SOCKET)|NIRI_SOCKET|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|INSTA_UPDATE)=" | sort | tr "\n" " ")"
+  echo
+  exec "$@"'
+
+# Runs a command in one of the environments, with the step's target dir.
 run_in() {
   local env=$1 target=$2
   shift 2
-  local vars=(XDG_RUNTIME_DIR="$run_dir") shell path_prefix=
+  local vars=() toolchain
   [[ $target != - ]] && vars+=(CARGO_TARGET_DIR="$root/$target")
   case $env in
-    upstream) shell=(nix develop "$root") ;;
-    msrv)
-      resolve_msrv_toolchain || return 1
-      shell=(nix develop "$root")
-      path_prefix=$msrv_toolchain/bin
+    nixpkgs)
+      "${isolate[@]}" nix develop --inputs-from "$nixpkgs_from" nixpkgs#niri \
+        --command bash -c "$inner" gate "" yes env "${vars[@]}" "$@"
       ;;
-    nixpkgs) shell=(nix develop --inputs-from "$nixpkgs_from" nixpkgs#niri) ;;
-    host)
-      env "${vars[@]}" "$@"
-      return
+    stable | nightly | msrv)
+      toolchain=$(resolve_toolchain "$env") || return 1
+      "${isolate[@]}" nix develop "$root" \
+        --command bash -c "$inner" gate "$toolchain" yes env "${vars[@]}" "$@"
       ;;
+    host) "${isolate[@]}" bash -c "$inner" gate "" no "$@" ;;
   esac
-  # shellcheck disable=SC2016 # expanded by the inner shell
-  "${shell[@]}" --command bash -c '
-    [[ -n $1 ]] && export PATH="$1:$PATH"
-    shift
-    echo "toolchain: $(rustc --version); $(cargo --version)"
-    echo
-    exec "$@"' gate "$path_prefix" env "${vars[@]}" "$@"
 }
 
 mkdir -p "$log_dir"

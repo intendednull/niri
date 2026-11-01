@@ -39,6 +39,9 @@ Bottom to top:
 3. **`Clean up renderer caches from the fallback timer`**, RiversJin's `4da66421` from #4550, with
    its `egl_cleanup_*` regression tests, carried unchanged. It fixes #3295. `closed (policy)`,
    `Drop-When: an upstream release fixes niri-wm/niri#3295`.
+4. **`fork: Isolate the gate and correct the practice record`**: changes to the four files from
+   commit 1, made after `nixos` was published. It isolates the gate from the live session, pins its
+   toolchains, and corrects the practice file and these docs. `local`.
 
 Every commit carries trailers for the `fork` tool in `~/nixos`. They survive rebase and
 `format-patch`:
@@ -82,8 +85,9 @@ the `(cherry picked from commit …)` line and our trailers.
 - **Clone config:** `rerere.enabled` and `rerere.autoupdate` are on, `remote.upstream.tagOpt` is
   `--tags`, and `upstream/HEAD` is set (`git remote set-head upstream --auto`). Tools use
   `upstream/HEAD`, never a hard-coded `main`.
-- **Push permission:** sessions may push `patch/*` branches, `nixos` (including the pinned-lease
-  rewrite push) and `pin/*` tags to `origin` without asking. Nothing is ever pushed to an upstream.
+- **Push permission:** sessions may push `patch/*` branches, `nixos` (a fast-forward, or the
+  pinned-lease push after a rewrite) and `pin/*` tags to `origin` without asking. Nothing is ever
+  pushed to an upstream.
 
 ## Landing a patch
 
@@ -101,9 +105,10 @@ reorder, reword). `fork rebase niri <new-base>` and `fork rebase niri --edit` ru
    `origin/nixos`, so commits pushed from elsewhere aren't discarded.
 2. Save the pre-rewrite ref: `git branch nixos-pre-<label> nixos`. Never overwrite an existing one.
 3. Rebase:
-   - When the old base is an ancestor of the new one (`git merge-base --is-ancestor`), use plain
-     `git rebase <new-base> nixos`. It skips every commit whose patch-id is already upstream. All
-     niri release tags are ancestors of upstream `main`.
+   - When the old base is an ancestor of the new one, use plain `git rebase <new-base> nixos`. It
+     skips every commit whose patch-id is already upstream. Release tags are normally on `main`,
+     but a point release can be cut on a branch (`v0.1.10.1` is on `niri-0-1-10`), so always check
+     with `git merge-base --is-ancestor <old-base> <new-base>`.
    - Don't use `--onto <new-base> <old-base>` there. It compares against the old base, so it
      conflicts on a backport that upstream later edited instead of dropping it.
    - Otherwise, use `--onto` with a todo that drops every commit
@@ -114,8 +119,10 @@ reorder, reword). `fork rebase niri <new-base>` and `fork rebase niri --edit` ru
 4. Review: `git range-diff <old-base>..nixos-pre-<label> <new-base>..nixos`, then run the full
    `.fork/gate`. On a base bump, re-read the upstream practice too.
 5. Push with a lease pinned to the saved ref:
-   `git push --force-with-lease=nixos:nixos-pre-<label> --force-if-includes origin nixos`. A bare
-   `--force-with-lease` is unsafe, because `fork status` refreshes `origin/nixos`.
+   `git push --force-with-lease=nixos:nixos-pre-<label> origin nixos`. A bare `--force-with-lease`
+   is unsafe, because `fork status` refreshes `origin/nixos`. Adding `--force-if-includes` doesn't
+   help, since git ignores it when the lease names an explicit expected value, so the pinned lease
+   is the only guard.
 6. Pin it with `fork pin niri`.
 
 ## The gate

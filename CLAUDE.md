@@ -15,8 +15,9 @@ Rules for agents:
 - **Never push to niri-wm, and never point `gh` at it** beyond a read you really need. Every `gh`
   call names its repo: `-R intendednull/niri`. The `upstream` push URL `no_push` is deliberate; do
   not "fix" it.
-- **Pushing to `origin` is pre-authorised:** `patch/*` branches, and `nixos` with the pinned-lease
-  push after a rewrite. `pin/*` tags come from `fork pin`; never move or delete one.
+- **Pushing to `origin`, and only `origin`, is pre-authorised:** `patch/*` branches, `nixos` (a
+  fast-forward, or the pinned-lease push after a rewrite) and `pin/*` tags. `pin/*` tags come from
+  `fork pin`; never move or delete one.
 - **Never commit to `main`.** It mirrors upstream.
 - **Do patch work on `patch/<slug>` off `nixos`.** One concern per patch, in niri's style
   (`area: Summary`, rustfmt nightly), with the `Upstream:`, `Upstream-Status:` and optional
@@ -24,8 +25,9 @@ Rules for agents:
 - **Cherry-picks keep their original author and message**, plus the `-x` line and our trailers.
   Never edit carried third-party code; record its gate failures under "Where the fork deviates".
 - **Rewrite `nixos` only through the guarded path** in `FORK.md`: plain `git rebase <new-base>`
-  when the old base is an ancestor (never `--onto` then), `git range-diff`, the gate, and
-  `git push --force-with-lease=nixos:nixos-pre-<label> --force-if-includes origin nixos`.
+  when `git merge-base --is-ancestor` says the old base is an ancestor (never `--onto` then),
+  `git range-diff`, the gate, and
+  `git push --force-with-lease=nixos:nixos-pre-<label> origin nixos`.
 - **Run `.fork/gate` before landing on `nixos`.** Every pin runs the full gate.
 - **Deploying is a `~/nixos` change** (`docs/forks.md`, `nix run .#fork`), not something done from
   this repo.
