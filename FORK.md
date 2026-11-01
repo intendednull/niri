@@ -42,6 +42,8 @@ Bottom to top:
 4. **`fork: Isolate the gate and correct the practice record`**: changes to the four files from
    commit 1, made after `nixos` was published. It isolates the gate from the live session, pins its
    toolchains, and corrects the practice file and these docs. `local`.
+5. **`fork: Pre-approve lease pushes of patch branches`**: `.claude/settings.json`, with the Claude
+   Code rule below under Guards. `local`.
 
 Every commit carries trailers for the `fork` tool in `~/nixos`. They survive rebase and
 `format-patch`:
@@ -88,6 +90,12 @@ the `(cherry picked from commit …)` line and our trailers.
 - **Push permission:** sessions may push `patch/*` branches, `nixos` (a fast-forward, or the
   pinned-lease push after a rewrite) and `pin/*` tags to `origin` without asking. Nothing is ever
   pushed to an upstream.
+- **`.claude/settings.json`** pre-approves exactly
+  `git push --force-with-lease origin patch/<branch>` for Claude Code, so a rebased patch branch can
+  be force-pushed without a prompt. `origin` comes before any wildcard, so the rule can't name
+  `upstream` or a URL. `ask` rules send any further argument and a `src:dst` refspec back to the
+  normal check (a prompt, or the safety classifier in auto mode), so the pre-approval can't reach
+  `nixos` or a tag. It leaves out `nixos` itself, whose rewrite needs the pinned lease (see below).
 
 ## Landing a patch
 

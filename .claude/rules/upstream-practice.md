@@ -174,10 +174,11 @@ Run the gate before anything lands on `nixos` and on every pin.
 
 ## Where the fork deviates and why
 
-- **The `local` docs commits** (FORK.md, CLAUDE.md, this file, `.fork/gate`) are fork-only and
-  agent-written. Fork commits carry `Upstream:`, `Upstream-Status:` and `Drop-When:` trailers and a
-  `Co-Authored-By: Claude` line, which upstream doesn't use. The tools read the trailers, and the
-  attribution marks the commit as never submittable.
+- **The `local` docs commits** (FORK.md, CLAUDE.md, this file, `.fork/gate`,
+  `.claude/settings.json`) are fork-only and agent-written. Fork commits carry `Upstream:`,
+  `Upstream-Status:` and `Drop-When:` trailers and a `Co-Authored-By: Claude` line, which upstream
+  doesn't use. The tools read the trailers, and the attribution marks the commit as never
+  submittable.
 - **The base is a release** (`v26.04`, what nixpkgs ships), not `main`. The practice is still read
   from `main`.
 - **Carried commits keep their own style.** The `bb38b7e14` backport keeps its `fix(niri):`
